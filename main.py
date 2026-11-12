@@ -22,6 +22,7 @@ DRAFT_CHANNEL_ID = os.environ["DRAFT_CHANNEL_ID"]
 CHANNEL_ID = os.environ["CHANNEL_ID"]
 DB_PATH = Path(os.getenv("DB_PATH", "data/hockey_bot.sqlite3"))
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+DRAFT_CHAT_ID = None
 
 
 def db():
@@ -82,6 +83,10 @@ def get_state():
         ).fetchone()
 
 
+def is_draft_chat(chat_id):
+    return DRAFT_CHAT_ID is not None and chat_id == DRAFT_CHAT_ID
+
+
 def clear_state():
     with db() as con:
         con.execute("DELETE FROM user_state WHERE user_id=?", (ADMIN_USER_ID,))
@@ -139,7 +144,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_USER_ID:
         await query.answer("Нет доступа.", show_alert=True)
         return
-    if str(message.chat.id) != str(DRAFT_CHANNEL_ID):
+    if not is_draft_chat(message.chat.id):
         await query.answer("Это не черновой канал.", show_alert=True)
         return
     await query.answer()
@@ -215,7 +220,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def channel_post_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.channel_post
-    if not message or str(message.chat.id) != str(DRAFT_CHANNEL_ID):
+    if not message or not is_draft_chat(message.chat.id):
         return
     state = get_state()
     if not state or not message.text:
@@ -246,7 +251,7 @@ async def channel_post_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 async def button_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Create a local draft record for a button message sent by Make."""
     message = update.channel_post
-    if not message or str(message.chat.id) != str(DRAFT_CHANNEL_ID):
+    if not message or not is_draft_chat(message.chat.id):
         return
     raw = message.text or message.caption or ""
     if "ЧЕРНОВИК" not in raw.upper():
@@ -278,10 +283,14 @@ def build_app():
 
 
 async def main():
+    global DRAFT_CHAT_ID
     init_db()
     app = build_app()
     log.info("Telegram-бот запущен в режиме polling")
     await app.initialize()
+    draft_chat = await app.bot.get_chat(DRAFT_CHANNEL_ID)
+    DRAFT_CHAT_ID = draft_chat.id
+    log.info("Черновой канал распознан: %s", DRAFT_CHAT_ID)
     await app.start()
     if not app.updater:
         raise RuntimeError("Telegram updater unavailable")
